@@ -98,24 +98,16 @@ static void printCFNumber(CFNumberRef val){
 }
 
 static void printStringProperty(const char* name,
-                                CFStringRef val,
+                                NSString *val,
                                 int pad)
 {
-    static const int VAL_BUF_LEN = 1024;
-    char valBuf[VAL_BUF_LEN];
-
-    Boolean haveStr = CFStringGetCString(val,
-                                         valBuf,
-                                         VAL_BUF_LEN,
-                                         kCFStringEncodingUTF8);
+    bool haveStr = val.UTF8String != NULL;
     if(!haveStr){
         fprintf(stderr, "WARNING: failed to get string\n");
-        valBuf[0] = 0;
     }
 
-    valBuf[VAL_BUF_LEN - 1] = 0;
     printf("%*s%s: ", pad, " ", name);
-    printCFString(val);
+    printf("%s", val.UTF8String);
     printf("\n");
 }
 
@@ -140,9 +132,12 @@ static const char* codecTypeName(CMVideoCodecType codecType){
         case kCMVideoCodecType_H263: return "H.263";
         case kCMVideoCodecType_H264: return "AVC/H.264";
         case kCMVideoCodecType_HEVC: return "HEVC/H.265";
+        case kCMVideoCodecType_HEVCWithAlpha: return "HEVC/H.265 Alpha";
+        case kCMVideoCodecType_DolbyVisionHEVC: return "Dolby Vision HEVC/H.265";
         case kCMVideoCodecType_MPEG4Video: return "MPEG4 Video";
         case kCMVideoCodecType_MPEG2Video: return "MPEG2 Video";
         case kCMVideoCodecType_MPEG1Video: return "MPEG Video";
+        case kCMVideoCodecType_VP9: return "VP9";
         case kCMVideoCodecType_DVCNTSC: return "DV NTSC";
         case kCMVideoCodecType_DVCPAL: return "DV PAL";
         case kCMVideoCodecType_DVCProPAL: return "DVCPro PAL";
@@ -191,21 +186,16 @@ static void printCodecTypeProperty(const char* name,
     printf("%*s%s: %s\n", pad, " ", name, codecTypeName(codecType));
 }
 
-static void printSupportedProperty(CFDictionaryRef propInfo,
-                                   CFStringRef key,
+static void printSupportedProperty(NSDictionary *propInfo,
+                                   NSString *key,
                                    int pad)
 {
-    printf("%*s", pad, " ");
-    printCFString(key);
-    printf("\n");
+    printf("%*s%s\n", pad, " ", key.UTF8String);
 
-    CFStringRef rwStatus = CFDictionaryGetValue(propInfo,
-                                                kVTPropertyReadWriteStatusKey);
+    NSString *rwStatus = propInfo[(NSString*)kVTPropertyReadWriteStatusKey];
 
     if(rwStatus){
-        if(CFStringCompare(rwStatus,
-                           kVTPropertyReadWriteStatus_ReadOnly,
-                           0) == kCFCompareEqualTo)
+        if([rwStatus isEqualToString:(NSString*)kVTPropertyReadWriteStatus_ReadOnly])
         {
             printf("%*sValue is read-only.\n", pad + 4, " ");
         } else {
@@ -213,64 +203,52 @@ static void printSupportedProperty(CFDictionaryRef propInfo,
         }
     }
 
-    CFNumberRef minValue = CFDictionaryGetValue(propInfo,
-                                                kVTPropertySupportedValueMinimumKey);
+    NSNumber *minValue = propInfo[(NSString*)kVTPropertySupportedValueMinimumKey];
 
     if(minValue != NULL){
         printf("%*sMinimum value: ", pad + 4, " ");
-        printCFNumber(minValue);
+        printCFNumber((__bridge CFNumberRef)(minValue));
         printf("\n");
     }
 
-    CFNumberRef maxValue = CFDictionaryGetValue(propInfo,
-                                                kVTPropertySupportedValueMaximumKey);
+    NSNumber *maxValue = propInfo[(NSString*)kVTPropertySupportedValueMaximumKey];
 
     if(maxValue != NULL){
         printf("%*sMaximum value: ", pad + 4, " ");
-        printCFNumber(maxValue);
+        printCFNumber((__bridge CFNumberRef)(maxValue));
         printf("\n");
     }
 
-    CFArrayRef listOfValues = CFDictionaryGetValue(propInfo,
-                                                   kVTPropertySupportedValueListKey);
+    NSArray *listOfValues = propInfo[(NSString*)kVTPropertySupportedValueListKey];
 
     if(listOfValues){
-        CFIndex len = CFArrayGetCount(listOfValues);
-        for(CFIndex i = 0; i < len ; i++){
-            CFTypeRef val = CFArrayGetValueAtIndex(listOfValues, i);
+        for(id val in listOfValues){
             printf("%*s", pad + 4, " ");
-            printCFType(val);
+            printCFType((__bridge CFTypeRef)(val));
             printf("\n");
         }
     }
 }
 
-static void printEncoderSupportedProperties(CFStringRef encoderID,
+
+static void printEncoderSupportedProperties(NSString *encoderID,
                                             CMVideoCodecType codecType,
                                             int pad)
 {
-    CFMutableDictionaryRef encSpec;
-    encSpec = CFDictionaryCreateMutable(NULL,
-                                        1,
-                                        &kCFTypeDictionaryKeyCallBacks,
-                                        &kCFTypeDictionaryValueCallBacks);
+    NSDictionary *encSpec = @{(NSString*)kVTVideoEncoderList_EncoderID: encoderID};
 
     if(encSpec == NULL){
         fprintf(stderr, "Out of memory.\n");
         exit(ENOMEM);
     }
 
-    CFDictionaryAddValue(encSpec, kVTVideoEncoderList_EncoderID, encoderID);
-
     CFDictionaryRef supportedProps = NULL;
     OSStatus status = VTCopySupportedPropertyDictionaryForEncoder(1920,
                                                                   1080,
                                                                   codecType,
-                                                                  encSpec,
+                                                                  (__bridge CFDictionaryRef _Nullable)(encSpec),
                                                                   NULL,
                                                                   &supportedProps);
-
-    CFRelease(encSpec);
 
     if(status != 0 || supportedProps == NULL){
         fprintf(stderr,
@@ -279,55 +257,26 @@ static void printEncoderSupportedProperties(CFStringRef encoderID,
         return;
     }
 
-    Boolean printedFirstProp = false;
-    CFIndex count = CFDictionaryGetCount(supportedProps);
-    CFStringRef* keys = calloc(count, sizeof(CFStringRef));
-    CFTypeRef* values = calloc(count, sizeof(CFTypeRef));
-
-    if(keys == NULL || values == NULL){
-        fprintf(stderr, "Out of memory.\n");
-        exit(ENOMEM);
-    }
-
-    CFDictionaryGetKeysAndValues(supportedProps,
-                                 (const void**)keys,
-                                 (const void**)values);
-
-    for(CFIndex i = 0; i < count; i++){
-        CFDictionaryRef propInfo = CFDictionaryGetValue(supportedProps,
-                                                        keys[i]);
-
+    NSDictionary *hi = CFBridgingRelease(supportedProps);
+    bool printedFirstProp = false;
+    for (NSString *key in hi) {
+        id propInfo = hi[key];
         if(!printedFirstProp){
             printf("%*sSupported Properties:\n", pad, " ");
             printedFirstProp = true;
         }
-
-        printSupportedProperty(propInfo, keys[i], pad + 4);
+        printSupportedProperty(propInfo, key, pad + 4);
     }
-
-    free((void*)keys);
-    free((void*)values);
-
-    CFRelease(supportedProps);
 }
 
-static void printEncoderProperties(CFDictionaryRef encInfo){
-    CFStringRef displayName = CFDictionaryGetValue(encInfo, kVTVideoEncoderList_DisplayName);
-    CFNumberRef codecTypeNum = CFDictionaryGetValue(encInfo, kVTVideoEncoderList_CodecType);
-    CFStringRef encoderID = CFDictionaryGetValue(encInfo, kVTVideoEncoderList_EncoderID);
-    CFStringRef codecName = CFDictionaryGetValue(encInfo, kVTVideoEncoderList_CodecName);
-    CFStringRef encoderName = CFDictionaryGetValue(encInfo, kVTVideoEncoderList_EncoderName);
+static void printEncoderProperties(NSDictionary *encInfo){
+    NSString *displayName = encInfo[(NSString*)kVTVideoEncoderList_DisplayName];
+    NSNumber *codecTypeNum = encInfo[(NSString*)kVTVideoEncoderList_CodecType];
+    NSString *encoderID = encInfo[(NSString*)kVTVideoEncoderList_EncoderID];
+    NSString *codecName = encInfo[(NSString*)kVTVideoEncoderList_CodecName];
+    NSString *encoderName = encInfo[(NSString*)kVTVideoEncoderList_EncoderName];
 
-    CMVideoCodecType codecType;
-    Boolean gotNum = CFNumberGetValue(codecTypeNum,
-                                      kCFNumberSInt32Type,
-                                      &codecType);
-
-    if(!gotNum){
-        fprintf(stderr, "WARNING: failed to get codec type value\n");
-
-        codecType = -1;
-    }
+    CMVideoCodecType codecType = codecTypeNum.intValue;
 
     printStringProperty("Encoder", displayName, 0);
     printCodecTypeProperty("Codec Type", codecType, 4);
@@ -349,13 +298,10 @@ int main(int argc, const char * argv[]) {
             return 1;
         }
 
-        int encoderCount = (int)CFArrayGetCount(encoders);
-        for(int i = 0; i < encoderCount; i++){
-            CFDictionaryRef encInfo = CFArrayGetValueAtIndex(encoders, i);
+        NSArray<NSDictionary*> *hi = CFBridgingRelease(encoders);
+        for(NSDictionary *encInfo in hi){
             printEncoderProperties(encInfo);
         }
-
-        CFRelease(encoders);
     }
 
     return 0;
