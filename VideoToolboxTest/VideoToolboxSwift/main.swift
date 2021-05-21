@@ -138,10 +138,17 @@ private func codecTypeName(_ codecType: CMVideoCodecType) -> String {
 		return "VP9"
 		
 		default:
+			var errOut = StderrOutputStream()
+			print("Unknown code \(codecType)", terminator: "", to: &errOut)
+			let hi = { () -> String in
 			if let codec = OSTypeToString(codecType) {
-				return "Unknown codec '\(codec)', codecTypeName needs updating!"
+				print(": OSType is \(codec)", terminator: "", to: &errOut)
+				return "Unknown codec '\(codec)'"
 			}
 			return "<UNKNOWN>"
+			}()
+			print(", codecTypeName needs updating!", to: &errOut)
+			return hi
 	}
 }
 
